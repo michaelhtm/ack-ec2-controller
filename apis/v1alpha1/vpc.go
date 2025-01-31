@@ -100,6 +100,9 @@ type VPCStatus struct {
 	// resource
 	// +kubebuilder:validation:Optional
 	Conditions []*ackv1alpha1.Condition `json:"conditions"`
+	// The state of VPC Block Public Access (BPA).
+	// +kubebuilder:validation:Optional
+	BlockPublicAccessStates *BlockPublicAccessStates `json:"blockPublicAccessStates,omitempty"`
 	// Information about the IPv4 CIDR blocks associated with the VPC.
 	// +kubebuilder:validation:Optional
 	CIDRBlockAssociationSet []*VPCCIDRBlockAssociation `json:"cidrBlockAssociationSet,omitempty"`

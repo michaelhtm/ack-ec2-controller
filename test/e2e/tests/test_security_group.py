@@ -334,6 +334,7 @@ class TestSecurityGroup:
                 {
                     "description": "test userIDGroupPairs",
                     "userID": str(get_account_id()),
+                    "groupID": resource_id
                 }
             ],
         }

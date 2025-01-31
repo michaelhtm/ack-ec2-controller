@@ -179,6 +179,12 @@ spec:
                 - ownerAccountID
                 - region
                 type: object
+              blockPublicAccessStates:
+                description: The state of VPC Block Public Access (BPA).
+                properties:
+                  internetGatewayBlockMode:
+                    type: string
+                type: object
               cidrBlockAssociationSet:
                 description: Information about the IPv4 CIDR blocks associated with
                   the VPC.
@@ -245,6 +251,10 @@ spec:
                   description: Describes an IPv6 CIDR block associated with a VPC.
                   properties:
                     associationID:
+                      type: string
+                    ipSource:
+                      type: string
+                    ipv6AddressAttribute:
                       type: string
                     ipv6CIDRBlock:
                       type: string

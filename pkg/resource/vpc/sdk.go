@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 
@@ -28,8 +29,10 @@ import (
 	ackerr "github.com/aws-controllers-k8s/runtime/pkg/errors"
 	ackrequeue "github.com/aws-controllers-k8s/runtime/pkg/requeue"
 	ackrtlog "github.com/aws-controllers-k8s/runtime/pkg/runtime/log"
-	"github.com/aws/aws-sdk-go/aws"
-	svcsdk "github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	svcsdk "github.com/aws/aws-sdk-go-v2/service/ec2"
+	svcsdktypes "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	smithy "github.com/aws/smithy-go"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -40,8 +43,7 @@ import (
 var (
 	_ = &metav1.Time{}
 	_ = strings.ToLower("")
-	_ = &aws.JSONValue{}
-	_ = &svcsdk.EC2{}
+	_ = &svcsdk.Client{}
 	_ = &svcapitypes.VPC{}
 	_ = ackv1alpha1.AWSAccountID("")
 	_ = &ackerr.NotFound
@@ -49,6 +51,7 @@ var (
 	_ = &reflect.Value{}
 	_ = fmt.Sprintf("")
 	_ = &ackrequeue.NoRequeue{}
+	_ = &aws.Config{}
 )
 
 // sdkFind returns SDK-specific information about a supplied resource
@@ -73,10 +76,11 @@ func (rm *resourceManager) sdkFind(
 		return nil, err
 	}
 	var resp *svcsdk.DescribeVpcsOutput
-	resp, err = rm.sdkapi.DescribeVpcsWithContext(ctx, input)
+	resp, err = rm.sdkapi.DescribeVpcs(ctx, input)
 	rm.metrics.RecordAPICall("READ_MANY", "DescribeVpcs", err)
 	if err != nil {
-		if awsErr, ok := ackerr.AWSError(err); ok && awsErr.Code() == "InvalidVpcID.NotFound" {
+		var awsErr smithy.APIError
+		if errors.As(err, &awsErr) && awsErr.ErrorCode() == "InvalidVpcID.NotFound" {
 			return nil, ackerr.NotFound
 		}
 		return nil, err
@@ -88,29 +92,38 @@ func (rm *resourceManager) sdkFind(
 
 	found := false
 	for _, elem := range resp.Vpcs {
-		if elem.CidrBlockAssociationSet != nil {
-			f0 := []*svcapitypes.VPCCIDRBlockAssociation{}
-			for _, f0iter := range elem.CidrBlockAssociationSet {
-				f0elem := &svcapitypes.VPCCIDRBlockAssociation{}
-				if f0iter.AssociationId != nil {
-					f0elem.AssociationID = f0iter.AssociationId
-				}
-				if f0iter.CidrBlock != nil {
-					f0elem.CIDRBlock = f0iter.CidrBlock
-				}
-				if f0iter.CidrBlockState != nil {
-					f0elemf2 := &svcapitypes.VPCCIDRBlockState{}
-					if f0iter.CidrBlockState.State != nil {
-						f0elemf2.State = f0iter.CidrBlockState.State
-					}
-					if f0iter.CidrBlockState.StatusMessage != nil {
-						f0elemf2.StatusMessage = f0iter.CidrBlockState.StatusMessage
-					}
-					f0elem.CIDRBlockState = f0elemf2
-				}
-				f0 = append(f0, f0elem)
+		if elem.BlockPublicAccessStates != nil {
+			f0 := &svcapitypes.BlockPublicAccessStates{}
+			if elem.BlockPublicAccessStates.InternetGatewayBlockMode != "" {
+				f0.InternetGatewayBlockMode = aws.String(string(elem.BlockPublicAccessStates.InternetGatewayBlockMode))
 			}
-			ko.Status.CIDRBlockAssociationSet = f0
+			ko.Status.BlockPublicAccessStates = f0
+		} else {
+			ko.Status.BlockPublicAccessStates = nil
+		}
+		if elem.CidrBlockAssociationSet != nil {
+			f1 := []*svcapitypes.VPCCIDRBlockAssociation{}
+			for _, f1iter := range elem.CidrBlockAssociationSet {
+				f1elem := &svcapitypes.VPCCIDRBlockAssociation{}
+				if f1iter.AssociationId != nil {
+					f1elem.AssociationID = f1iter.AssociationId
+				}
+				if f1iter.CidrBlock != nil {
+					f1elem.CIDRBlock = f1iter.CidrBlock
+				}
+				if f1iter.CidrBlockState != nil {
+					f1elemf2 := &svcapitypes.VPCCIDRBlockState{}
+					if f1iter.CidrBlockState.State != "" {
+						f1elemf2.State = aws.String(string(f1iter.CidrBlockState.State))
+					}
+					if f1iter.CidrBlockState.StatusMessage != nil {
+						f1elemf2.StatusMessage = f1iter.CidrBlockState.StatusMessage
+					}
+					f1elem.CIDRBlockState = f1elemf2
+				}
+				f1 = append(f1, f1elem)
+			}
+			ko.Status.CIDRBlockAssociationSet = f1
 		} else {
 			ko.Status.CIDRBlockAssociationSet = nil
 		}
@@ -119,40 +132,46 @@ func (rm *resourceManager) sdkFind(
 		} else {
 			ko.Status.DHCPOptionsID = nil
 		}
-		if elem.InstanceTenancy != nil {
-			ko.Spec.InstanceTenancy = elem.InstanceTenancy
+		if elem.InstanceTenancy != "" {
+			ko.Spec.InstanceTenancy = aws.String(string(elem.InstanceTenancy))
 		} else {
 			ko.Spec.InstanceTenancy = nil
 		}
 		if elem.Ipv6CidrBlockAssociationSet != nil {
-			f3 := []*svcapitypes.VPCIPv6CIDRBlockAssociation{}
-			for _, f3iter := range elem.Ipv6CidrBlockAssociationSet {
-				f3elem := &svcapitypes.VPCIPv6CIDRBlockAssociation{}
-				if f3iter.AssociationId != nil {
-					f3elem.AssociationID = f3iter.AssociationId
+			f4 := []*svcapitypes.VPCIPv6CIDRBlockAssociation{}
+			for _, f4iter := range elem.Ipv6CidrBlockAssociationSet {
+				f4elem := &svcapitypes.VPCIPv6CIDRBlockAssociation{}
+				if f4iter.AssociationId != nil {
+					f4elem.AssociationID = f4iter.AssociationId
 				}
-				if f3iter.Ipv6CidrBlock != nil {
-					f3elem.IPv6CIDRBlock = f3iter.Ipv6CidrBlock
+				if f4iter.IpSource != "" {
+					f4elem.IPSource = aws.String(string(f4iter.IpSource))
 				}
-				if f3iter.Ipv6CidrBlockState != nil {
-					f3elemf2 := &svcapitypes.VPCCIDRBlockState{}
-					if f3iter.Ipv6CidrBlockState.State != nil {
-						f3elemf2.State = f3iter.Ipv6CidrBlockState.State
+				if f4iter.Ipv6AddressAttribute != "" {
+					f4elem.IPv6AddressAttribute = aws.String(string(f4iter.Ipv6AddressAttribute))
+				}
+				if f4iter.Ipv6CidrBlock != nil {
+					f4elem.IPv6CIDRBlock = f4iter.Ipv6CidrBlock
+				}
+				if f4iter.Ipv6CidrBlockState != nil {
+					f4elemf4 := &svcapitypes.VPCCIDRBlockState{}
+					if f4iter.Ipv6CidrBlockState.State != "" {
+						f4elemf4.State = aws.String(string(f4iter.Ipv6CidrBlockState.State))
 					}
-					if f3iter.Ipv6CidrBlockState.StatusMessage != nil {
-						f3elemf2.StatusMessage = f3iter.Ipv6CidrBlockState.StatusMessage
+					if f4iter.Ipv6CidrBlockState.StatusMessage != nil {
+						f4elemf4.StatusMessage = f4iter.Ipv6CidrBlockState.StatusMessage
 					}
-					f3elem.IPv6CIDRBlockState = f3elemf2
+					f4elem.IPv6CIDRBlockState = f4elemf4
 				}
-				if f3iter.Ipv6Pool != nil {
-					f3elem.IPv6Pool = f3iter.Ipv6Pool
+				if f4iter.Ipv6Pool != nil {
+					f4elem.IPv6Pool = f4iter.Ipv6Pool
 				}
-				if f3iter.NetworkBorderGroup != nil {
-					f3elem.NetworkBorderGroup = f3iter.NetworkBorderGroup
+				if f4iter.NetworkBorderGroup != nil {
+					f4elem.NetworkBorderGroup = f4iter.NetworkBorderGroup
 				}
-				f3 = append(f3, f3elem)
+				f4 = append(f4, f4elem)
 			}
-			ko.Status.IPv6CIDRBlockAssociationSet = f3
+			ko.Status.IPv6CIDRBlockAssociationSet = f4
 		} else {
 			ko.Status.IPv6CIDRBlockAssociationSet = nil
 		}
@@ -166,24 +185,24 @@ func (rm *resourceManager) sdkFind(
 		} else {
 			ko.Status.OwnerID = nil
 		}
-		if elem.State != nil {
-			ko.Status.State = elem.State
+		if elem.State != "" {
+			ko.Status.State = aws.String(string(elem.State))
 		} else {
 			ko.Status.State = nil
 		}
 		if elem.Tags != nil {
-			f7 := []*svcapitypes.Tag{}
-			for _, f7iter := range elem.Tags {
-				f7elem := &svcapitypes.Tag{}
-				if f7iter.Key != nil {
-					f7elem.Key = f7iter.Key
+			f8 := []*svcapitypes.Tag{}
+			for _, f8iter := range elem.Tags {
+				f8elem := &svcapitypes.Tag{}
+				if f8iter.Key != nil {
+					f8elem.Key = f8iter.Key
 				}
-				if f7iter.Value != nil {
-					f7elem.Value = f7iter.Value
+				if f8iter.Value != nil {
+					f8elem.Value = f8iter.Value
 				}
-				f7 = append(f7, f7elem)
+				f8 = append(f8, f8elem)
 			}
-			ko.Spec.Tags = f7
+			ko.Spec.Tags = f8
 		} else {
 			ko.Spec.Tags = nil
 		}
@@ -240,9 +259,9 @@ func (rm *resourceManager) newListRequestPayload(
 	res := &svcsdk.DescribeVpcsInput{}
 
 	if r.ko.Status.VPCID != nil {
-		f4 := []*string{}
-		f4 = append(f4, r.ko.Status.VPCID)
-		res.SetVpcIds(f4)
+		f4 := []string{}
+		f4 = append(f4, *r.ko.Status.VPCID)
+		res.VpcIds = f4
 	}
 
 	return res, nil
@@ -271,7 +290,7 @@ func (rm *resourceManager) sdkCreate(
 
 	var resp *svcsdk.CreateVpcOutput
 	_ = resp
-	resp, err = rm.sdkapi.CreateVpcWithContext(ctx, input)
+	resp, err = rm.sdkapi.CreateVpc(ctx, input)
 	rm.metrics.RecordAPICall("CREATE", "CreateVpc", err)
 	if err != nil {
 		return nil, err
@@ -280,29 +299,38 @@ func (rm *resourceManager) sdkCreate(
 	// the original Kubernetes object we passed to the function
 	ko := desired.ko.DeepCopy()
 
-	if resp.Vpc.CidrBlockAssociationSet != nil {
-		f0 := []*svcapitypes.VPCCIDRBlockAssociation{}
-		for _, f0iter := range resp.Vpc.CidrBlockAssociationSet {
-			f0elem := &svcapitypes.VPCCIDRBlockAssociation{}
-			if f0iter.AssociationId != nil {
-				f0elem.AssociationID = f0iter.AssociationId
-			}
-			if f0iter.CidrBlock != nil {
-				f0elem.CIDRBlock = f0iter.CidrBlock
-			}
-			if f0iter.CidrBlockState != nil {
-				f0elemf2 := &svcapitypes.VPCCIDRBlockState{}
-				if f0iter.CidrBlockState.State != nil {
-					f0elemf2.State = f0iter.CidrBlockState.State
-				}
-				if f0iter.CidrBlockState.StatusMessage != nil {
-					f0elemf2.StatusMessage = f0iter.CidrBlockState.StatusMessage
-				}
-				f0elem.CIDRBlockState = f0elemf2
-			}
-			f0 = append(f0, f0elem)
+	if resp.Vpc.BlockPublicAccessStates != nil {
+		f0 := &svcapitypes.BlockPublicAccessStates{}
+		if resp.Vpc.BlockPublicAccessStates.InternetGatewayBlockMode != "" {
+			f0.InternetGatewayBlockMode = aws.String(string(resp.Vpc.BlockPublicAccessStates.InternetGatewayBlockMode))
 		}
-		ko.Status.CIDRBlockAssociationSet = f0
+		ko.Status.BlockPublicAccessStates = f0
+	} else {
+		ko.Status.BlockPublicAccessStates = nil
+	}
+	if resp.Vpc.CidrBlockAssociationSet != nil {
+		f1 := []*svcapitypes.VPCCIDRBlockAssociation{}
+		for _, f1iter := range resp.Vpc.CidrBlockAssociationSet {
+			f1elem := &svcapitypes.VPCCIDRBlockAssociation{}
+			if f1iter.AssociationId != nil {
+				f1elem.AssociationID = f1iter.AssociationId
+			}
+			if f1iter.CidrBlock != nil {
+				f1elem.CIDRBlock = f1iter.CidrBlock
+			}
+			if f1iter.CidrBlockState != nil {
+				f1elemf2 := &svcapitypes.VPCCIDRBlockState{}
+				if f1iter.CidrBlockState.State != "" {
+					f1elemf2.State = aws.String(string(f1iter.CidrBlockState.State))
+				}
+				if f1iter.CidrBlockState.StatusMessage != nil {
+					f1elemf2.StatusMessage = f1iter.CidrBlockState.StatusMessage
+				}
+				f1elem.CIDRBlockState = f1elemf2
+			}
+			f1 = append(f1, f1elem)
+		}
+		ko.Status.CIDRBlockAssociationSet = f1
 	} else {
 		ko.Status.CIDRBlockAssociationSet = nil
 	}
@@ -311,40 +339,46 @@ func (rm *resourceManager) sdkCreate(
 	} else {
 		ko.Status.DHCPOptionsID = nil
 	}
-	if resp.Vpc.InstanceTenancy != nil {
-		ko.Spec.InstanceTenancy = resp.Vpc.InstanceTenancy
+	if resp.Vpc.InstanceTenancy != "" {
+		ko.Spec.InstanceTenancy = aws.String(string(resp.Vpc.InstanceTenancy))
 	} else {
 		ko.Spec.InstanceTenancy = nil
 	}
 	if resp.Vpc.Ipv6CidrBlockAssociationSet != nil {
-		f3 := []*svcapitypes.VPCIPv6CIDRBlockAssociation{}
-		for _, f3iter := range resp.Vpc.Ipv6CidrBlockAssociationSet {
-			f3elem := &svcapitypes.VPCIPv6CIDRBlockAssociation{}
-			if f3iter.AssociationId != nil {
-				f3elem.AssociationID = f3iter.AssociationId
+		f4 := []*svcapitypes.VPCIPv6CIDRBlockAssociation{}
+		for _, f4iter := range resp.Vpc.Ipv6CidrBlockAssociationSet {
+			f4elem := &svcapitypes.VPCIPv6CIDRBlockAssociation{}
+			if f4iter.AssociationId != nil {
+				f4elem.AssociationID = f4iter.AssociationId
 			}
-			if f3iter.Ipv6CidrBlock != nil {
-				f3elem.IPv6CIDRBlock = f3iter.Ipv6CidrBlock
+			if f4iter.IpSource != "" {
+				f4elem.IPSource = aws.String(string(f4iter.IpSource))
 			}
-			if f3iter.Ipv6CidrBlockState != nil {
-				f3elemf2 := &svcapitypes.VPCCIDRBlockState{}
-				if f3iter.Ipv6CidrBlockState.State != nil {
-					f3elemf2.State = f3iter.Ipv6CidrBlockState.State
+			if f4iter.Ipv6AddressAttribute != "" {
+				f4elem.IPv6AddressAttribute = aws.String(string(f4iter.Ipv6AddressAttribute))
+			}
+			if f4iter.Ipv6CidrBlock != nil {
+				f4elem.IPv6CIDRBlock = f4iter.Ipv6CidrBlock
+			}
+			if f4iter.Ipv6CidrBlockState != nil {
+				f4elemf4 := &svcapitypes.VPCCIDRBlockState{}
+				if f4iter.Ipv6CidrBlockState.State != "" {
+					f4elemf4.State = aws.String(string(f4iter.Ipv6CidrBlockState.State))
 				}
-				if f3iter.Ipv6CidrBlockState.StatusMessage != nil {
-					f3elemf2.StatusMessage = f3iter.Ipv6CidrBlockState.StatusMessage
+				if f4iter.Ipv6CidrBlockState.StatusMessage != nil {
+					f4elemf4.StatusMessage = f4iter.Ipv6CidrBlockState.StatusMessage
 				}
-				f3elem.IPv6CIDRBlockState = f3elemf2
+				f4elem.IPv6CIDRBlockState = f4elemf4
 			}
-			if f3iter.Ipv6Pool != nil {
-				f3elem.IPv6Pool = f3iter.Ipv6Pool
+			if f4iter.Ipv6Pool != nil {
+				f4elem.IPv6Pool = f4iter.Ipv6Pool
 			}
-			if f3iter.NetworkBorderGroup != nil {
-				f3elem.NetworkBorderGroup = f3iter.NetworkBorderGroup
+			if f4iter.NetworkBorderGroup != nil {
+				f4elem.NetworkBorderGroup = f4iter.NetworkBorderGroup
 			}
-			f3 = append(f3, f3elem)
+			f4 = append(f4, f4elem)
 		}
-		ko.Status.IPv6CIDRBlockAssociationSet = f3
+		ko.Status.IPv6CIDRBlockAssociationSet = f4
 	} else {
 		ko.Status.IPv6CIDRBlockAssociationSet = nil
 	}
@@ -358,24 +392,24 @@ func (rm *resourceManager) sdkCreate(
 	} else {
 		ko.Status.OwnerID = nil
 	}
-	if resp.Vpc.State != nil {
-		ko.Status.State = resp.Vpc.State
+	if resp.Vpc.State != "" {
+		ko.Status.State = aws.String(string(resp.Vpc.State))
 	} else {
 		ko.Status.State = nil
 	}
 	if resp.Vpc.Tags != nil {
-		f7 := []*svcapitypes.Tag{}
-		for _, f7iter := range resp.Vpc.Tags {
-			f7elem := &svcapitypes.Tag{}
-			if f7iter.Key != nil {
-				f7elem.Key = f7iter.Key
+		f8 := []*svcapitypes.Tag{}
+		for _, f8iter := range resp.Vpc.Tags {
+			f8elem := &svcapitypes.Tag{}
+			if f8iter.Key != nil {
+				f8elem.Key = f8iter.Key
 			}
-			if f7iter.Value != nil {
-				f7elem.Value = f7iter.Value
+			if f8iter.Value != nil {
+				f8elem.Value = f8iter.Value
 			}
-			f7 = append(f7, f7elem)
+			f8 = append(f8, f8elem)
 		}
-		ko.Spec.Tags = f7
+		ko.Spec.Tags = f8
 	} else {
 		ko.Spec.Tags = nil
 	}
@@ -416,31 +450,41 @@ func (rm *resourceManager) newCreateRequestPayload(
 	res := &svcsdk.CreateVpcInput{}
 
 	if r.ko.Spec.AmazonProvidedIPv6CIDRBlock != nil {
-		res.SetAmazonProvidedIpv6CidrBlock(*r.ko.Spec.AmazonProvidedIPv6CIDRBlock)
+		res.AmazonProvidedIpv6CidrBlock = r.ko.Spec.AmazonProvidedIPv6CIDRBlock
 	}
 	if r.ko.Spec.InstanceTenancy != nil {
-		res.SetInstanceTenancy(*r.ko.Spec.InstanceTenancy)
+		res.InstanceTenancy = svcsdktypes.Tenancy(*r.ko.Spec.InstanceTenancy)
 	}
 	if r.ko.Spec.IPv4IPAMPoolID != nil {
-		res.SetIpv4IpamPoolId(*r.ko.Spec.IPv4IPAMPoolID)
+		res.Ipv4IpamPoolId = r.ko.Spec.IPv4IPAMPoolID
 	}
 	if r.ko.Spec.IPv4NetmaskLength != nil {
-		res.SetIpv4NetmaskLength(*r.ko.Spec.IPv4NetmaskLength)
+		ipv4NetmaskLengthCopy0 := *r.ko.Spec.IPv4NetmaskLength
+		if ipv4NetmaskLengthCopy0 > math.MaxInt32 || ipv4NetmaskLengthCopy0 < math.MinInt32 {
+			return nil, fmt.Errorf("error: field Ipv4NetmaskLength is of type int32")
+		}
+		ipv4NetmaskLengthCopy := int32(ipv4NetmaskLengthCopy0)
+		res.Ipv4NetmaskLength = &ipv4NetmaskLengthCopy
 	}
 	if r.ko.Spec.IPv6CIDRBlock != nil {
-		res.SetIpv6CidrBlock(*r.ko.Spec.IPv6CIDRBlock)
+		res.Ipv6CidrBlock = r.ko.Spec.IPv6CIDRBlock
 	}
 	if r.ko.Spec.IPv6CIDRBlockNetworkBorderGroup != nil {
-		res.SetIpv6CidrBlockNetworkBorderGroup(*r.ko.Spec.IPv6CIDRBlockNetworkBorderGroup)
+		res.Ipv6CidrBlockNetworkBorderGroup = r.ko.Spec.IPv6CIDRBlockNetworkBorderGroup
 	}
 	if r.ko.Spec.IPv6IPAMPoolID != nil {
-		res.SetIpv6IpamPoolId(*r.ko.Spec.IPv6IPAMPoolID)
+		res.Ipv6IpamPoolId = r.ko.Spec.IPv6IPAMPoolID
 	}
 	if r.ko.Spec.IPv6NetmaskLength != nil {
-		res.SetIpv6NetmaskLength(*r.ko.Spec.IPv6NetmaskLength)
+		ipv6NetmaskLengthCopy0 := *r.ko.Spec.IPv6NetmaskLength
+		if ipv6NetmaskLengthCopy0 > math.MaxInt32 || ipv6NetmaskLengthCopy0 < math.MinInt32 {
+			return nil, fmt.Errorf("error: field Ipv6NetmaskLength is of type int32")
+		}
+		ipv6NetmaskLengthCopy := int32(ipv6NetmaskLengthCopy0)
+		res.Ipv6NetmaskLength = &ipv6NetmaskLengthCopy
 	}
 	if r.ko.Spec.IPv6Pool != nil {
-		res.SetIpv6Pool(*r.ko.Spec.IPv6Pool)
+		res.Ipv6Pool = r.ko.Spec.IPv6Pool
 	}
 
 	return res, nil
@@ -473,7 +517,7 @@ func (rm *resourceManager) sdkDelete(
 	}
 	var resp *svcsdk.DeleteVpcOutput
 	_ = resp
-	resp, err = rm.sdkapi.DeleteVpcWithContext(ctx, input)
+	resp, err = rm.sdkapi.DeleteVpc(ctx, input)
 	rm.metrics.RecordAPICall("DELETE", "DeleteVpc", err)
 	return nil, err
 }
@@ -486,7 +530,7 @@ func (rm *resourceManager) newDeleteRequestPayload(
 	res := &svcsdk.DeleteVpcInput{}
 
 	if r.ko.Status.VPCID != nil {
-		res.SetVpcId(*r.ko.Status.VPCID)
+		res.VpcId = r.ko.Status.VPCID
 	}
 
 	return res, nil
@@ -594,11 +638,12 @@ func (rm *resourceManager) terminalAWSError(err error) bool {
 	if err == nil {
 		return false
 	}
-	awsErr, ok := ackerr.AWSError(err)
-	if !ok {
+
+	var terminalErr smithy.APIError
+	if !errors.As(err, &terminalErr) {
 		return false
 	}
-	switch awsErr.Code() {
+	switch terminalErr.ErrorCode() {
 	case "InvalidParameterValue":
 		return true
 	default:
@@ -608,13 +653,13 @@ func (rm *resourceManager) terminalAWSError(err error) bool {
 
 func (rm *resourceManager) newTag(
 	c svcapitypes.Tag,
-) *svcsdk.Tag {
-	res := &svcsdk.Tag{}
+) *svcsdktypes.Tag {
+	res := &svcsdktypes.Tag{}
 	if c.Key != nil {
-		res.SetKey(*c.Key)
+		res.Key = c.Key
 	}
 	if c.Value != nil {
-		res.SetValue(*c.Value)
+		res.Value = c.Value
 	}
 
 	return res
